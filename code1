@@ -1,0 +1,52 @@
+// 显示研究区的位置
+var roi = ee.FeatureCollection("projects/ee-wangyongkang413/assets/Shanghai_district");
+var styling = {color: 'red', fillColor: '00000000'};
+Map.addLayer(roi.style(styling), {}, 'roi');
+Map.centerObject(roi, 5);
+
+// 定义时间范围
+var starty = ee.Date('2022-05-01');
+var endy = ee.Date('2022-10-31');
+
+// 加载Sentinel-2 L2A数据集，并筛选时间、区域、云量等条件
+var sentine12 = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+  .filterDate(starty, endy)
+  .filterBounds(roi)  // 使用上海行政区的几何信息
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30))  // 云量小于30%
+  .select(['B4', 'B8']);  // 选择与NDVI计算相关的波段：B4（红光）和B8（近红外）
+
+// 按日期分组并进行拼接
+var byDate = sentine12.map(function(image) {
+  return image.set('date', image.date().format('YYYY-MM-dd'));
+});
+
+// 获取所有影像的日期列表
+var dateList = byDate.aggregate_array('date').distinct();
+
+// 定义影像导出函数
+function exportToDrive(image, date) {
+  var exportName = 'Shanghai_Sentinel2_NDVI_Bands_' + date;
+  Export.image.toDrive({
+    image: image.clip(roi),  // 裁剪影像至上海行政区范围
+    description: exportName,
+    folder: '2024_毕业论文/images',  // 导出到Google Drive文件夹
+    fileNamePrefix: exportName,  // 文件名前缀
+    region: roi.geometry(),  // 裁剪区域
+    scale: 10,  // 分辨率10米
+    maxPixels: 1e13  // 最大像素限制
+  });
+}
+
+// 循环遍历日期列表，并对同一日期的影像进行拼接与导出
+dateList.evaluate(function(dates) {
+  dates.forEach(function(date) {
+    // 过滤出该日期的所有影像
+    var imagesOnDate = byDate.filter(ee.Filter.eq('date', date));
+    
+    // 对该日期的影像进行拼接
+    var mosaicImage = imagesOnDate.mosaic();
+
+    // 导出拼接后的影像
+    exportToDrive(mosaicImage, date);
+  });
+});
